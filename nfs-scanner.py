@@ -4,14 +4,10 @@ import time
 import argparse
 import colorama
 import sys
+import concurrent.futures
 
 from colorama import Fore, Back, Style
-
-### TODO
-# - Add multithreading
-# - Implement file extension filtering (right now the arg does nothing)
-###
-
+from threading import Lock
 
 
 def check_nfs_exports(nfs_host):
@@ -93,6 +89,51 @@ def check_for_keywords(files, keywords, keywords_found, filesize_to_check):
             print(Fore.RED + f"[-] Could not read file {file_path}: {e}")
 
     return keywords_found
+
+
+def start_checks(host, dict_of_exports, extensions_found, keywords_found, extensions, keywords, filesize_to_check, depth):
+
+    
+
+    # Initialize the dict for the host with the correct structure
+    dict_of_exports[host] = {'allowed': [], 'denied': []}
+    exports = check_nfs_exports(host)
+    if exports is None:
+        print(Fore.RED + f"[-] Failed to retrieve NFS exports for {host}")
+    elif not exports:
+        print(f"[*] No NFS exports found on {host}.")
+    else:
+        # If we get here then we have a list of exports to try and mount
+        print("="*40)
+        print(f"[*] Attempting to mount exports for {host}...")
+        for export in exports:
+            print("-"*40)
+            print("[*] Trying to mount: ", export)
+            # This returns true if mount was successful
+            mnt_point = f"/mnt/{host.replace('.', '_')}_{export.strip('/').replace('/', '_')}"
+            os.makedirs(mnt_point, exist_ok=True)
+            
+            # If successfully mounted, check files for keywords
+            if mount_nfs_share(host, export, mnt_point):
+                files_to_check = list_files(mnt_point, depth)
+
+                if extensions != '':
+                    extensions_found.extend(check_for_extensions(files_to_check, extensions))
+
+                keywords_found = check_for_keywords(files_to_check, keywords, keywords_found, filesize_to_check)
+
+                time.sleep(2)  # Wait for a few seconds to be sure the unmount works correctly
+                print("[*] Unmounting: ", export)
+                unmount_nfs_share(mnt_point)
+                os.rmdir(mnt_point)
+
+                # If we got here, everything else was successful and we add to the allowed list for this host
+                dict_of_exports[host]['allowed'].append(export)
+            else:
+                # Else, mount failed and add to the denied list for the host
+                dict_of_exports[host]['denied'].append(export)
+
+    return dict_of_exports, extensions_found, keywords_found
     
 def main():
 
@@ -118,6 +159,8 @@ def main():
     parser.add_argument('-f', '--file', help='File containing hosts to check', default=None)
     parser.add_argument('-fs', '--filesize', help='Maximum file size to check in MB', type=int, default=10)
     parser.add_argument('-o', '--output', help='Output file to save results (keyword hits and list of exports)', default=None)
+    parser.add_argument('--threads', help='Maximum number of threads to use', type=int, default=5)
+
 
     args = parser.parse_args()
 
@@ -138,10 +181,10 @@ def main():
                 print(Fore.RED + f"[-] Could not read file {args.file}: {e}")
                 return
 
-    if args.extensions != '':
-        extensions = args.extensions
-
+    extensions = args.extensions
     keywords = args.keywords.split(',')
+    depth = args.depth
+    max_threads = args.threads
 
     filesize_to_check = args.filesize
 
@@ -154,55 +197,48 @@ def main():
     # {'host': {'allowed': [], 'denied': []}}
     dict_of_exports = {}
 
+
+    # Locks for thread-safe access to shared data (Copilot)
+    dict_lock = Lock()
+    extensions_lock = Lock()
+    keywords_lock = Lock()
+
+    # Function to wrap start_checks with thread-safe data merging (Copilot)
+    def thread_safe_start_checks(host):
+        nonlocal dict_of_exports, extensions_found, keywords_found
+        local_dict_of_exports, local_extensions_found, local_keywords_found = start_checks(
+            host, {}, [], {}, extensions, keywords, filesize_to_check, depth
+        )
+        # Merge results into shared data structures
+        with dict_lock:
+            dict_of_exports.update(local_dict_of_exports)
+        with extensions_lock:
+            extensions_found.extend(local_extensions_found)
+        with keywords_lock:
+            keywords_found.update(local_keywords_found)
+
+    # Use ThreadPoolExecutor for concurrency with a thread limit (Copilot)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
+        futures = [executor.submit(thread_safe_start_checks, host) for host in nfs_hosts]
+        concurrent.futures.wait(futures)
+
+
+    # Keeping the section below for non-concurrent checks, just in case   
+    #
     # Start iterating through each host to check for exports and try to mount
-    for host in nfs_hosts:
-        # Initialize the dict for the host with the correct structure
-        dict_of_exports[host] = {'allowed': [], 'denied': []}
-        exports = check_nfs_exports(host)
-        if exports is None:
-            print(Fore.RED + f"[-] Failed to retrieve NFS exports for {host}")
-        elif not exports:
-            print(f"[*] No NFS exports found on {host}.")
-        else:
-            # If we get here then we have a list of exports to try and mount
-            print("="*40)
-            print(f"[*] Attempting to mount exports for {host}...")
-            for export in exports:
-                print("-"*40)
-                print("[*] Trying to mount: ", export)
-                # This returns true if mount was successful
-                mnt_point = f"/mnt/{host.replace('.', '_')}_{export.strip('/').replace('/', '_')}"
-                os.makedirs(mnt_point, exist_ok=True)
-                
-                # If successfully mounted, check files for keywords
-                if mount_nfs_share(host, export, mnt_point):
-                    files_to_check = list_files(mnt_point, args.depth)
-
-                    if args.extensions != '':
-                        extensions_found.extend(check_for_extensions(files_to_check, extensions))
-
-                    keywords_found = check_for_keywords(files_to_check, keywords, keywords_found, filesize_to_check)
-
-                    time.sleep(2)  # Wait for a few seconds to be sure the unmount works correctly
-                    print("[*] Unmounting: ", export)
-                    unmount_nfs_share(mnt_point)
-                    os.rmdir(mnt_point)
-
-                    # If we got here, everything else was successful and we add to the allowed list for this host
-                    dict_of_exports[host]['allowed'].append(export)
-                else:
-                    # Else, mount failed and add to the denied list for the host
-                    dict_of_exports[host]['denied'].append(export)
-
-
-
+    # for host in nfs_hosts:
+        
+    #     print("\n" + "="*40)
+    #     print(f"[*] Starting checks for NFS host: {host}")
+    #     print("="*40)
+    #     dict_of_exports, extensions_found, keywords_found = start_checks(host, dict_of_exports, extensions_found, keywords_found, extensions, keywords, filesize_to_check, depth)
 
     print("="*40)
 
     end_time = time.time()
     total_scan_time = end_time - start_time
 
-    # Print summary of keyword results
+    # Print summary of extension/keyword results
     print("\n[*] Scan complete in {:.2f} seconds.".format(total_scan_time))
 
     if extensions_found:
@@ -267,7 +303,8 @@ def main():
                 else:
                     out_file.write(f"No keywords found in scanned files ({keywords}).\n")
 
-                out_file.write("\n*"*40 + "\n")
+                out_file.write("\n")
+                out_file.write("*"*40 + "\n")
                 out_file.write("NFS Exports Summary:\n")
                 out_file.write("*"*40 + "\n")
 
