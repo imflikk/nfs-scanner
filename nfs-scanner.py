@@ -3,6 +3,7 @@ import os
 import time
 import argparse
 import colorama
+import sys
 
 from colorama import Fore, Back, Style
 
@@ -61,6 +62,17 @@ def list_files(mount_point, depth):
 
     return files_to_check
 
+def check_for_extensions(files, extensions):
+    extensions_found = []
+    ext_list = [ext.strip().lower() for ext in extensions.split(',')]
+    for file_path in files:
+        for ext in ext_list:
+            if file_path.lower().endswith(ext):
+                print(Fore.GREEN + f"[!] Found file with extension '{ext}': {file_path}")
+                extensions_found.append(file_path)
+                break
+    return extensions_found
+
 def check_for_keywords(files, keywords, keywords_found, filesize_to_check):
 
 
@@ -99,7 +111,7 @@ def main():
     # Parse command line args
     parser = argparse.ArgumentParser(description='NFS Export Scanner')
     parser.add_argument('-t', '--target', help='NFS server hostname or IP address')
-    parser.add_argument('-x', '--extensions', help='File extensions to look for (comma-separated)', default='')
+    parser.add_argument('-e', '--extensions', help='File extensions to look for (comma-separated)', default='')
     # Default depth set to 2, which is the root directory and any immediate subdirectories
     parser.add_argument('-d', '--depth', help='Directory depth to search for files', type=int, default=2)
     parser.add_argument('-k', '--keywords', help='Keywords to search for in files (comma-separated)', default='password,credential')
@@ -133,6 +145,8 @@ def main():
 
     filesize_to_check = args.filesize
 
+    # List to track files found with given extensions
+    extensions_found = []
     # dict to track keyword data
     keywords_found = {}
 
@@ -164,6 +178,9 @@ def main():
                 if mount_nfs_share(host, export, mnt_point):
                     files_to_check = list_files(mnt_point, args.depth)
 
+                    if args.extensions != '':
+                        extensions_found.extend(check_for_extensions(files_to_check, extensions))
+
                     keywords_found = check_for_keywords(files_to_check, keywords, keywords_found, filesize_to_check)
 
                     time.sleep(2)  # Wait for a few seconds to be sure the unmount works correctly
@@ -186,14 +203,28 @@ def main():
     total_scan_time = end_time - start_time
 
     # Print summary of keyword results
-    print("\n[*] Scan complete in {:.2f} seconds.\n".format(total_scan_time))
+    print("\n[*] Scan complete in {:.2f} seconds.".format(total_scan_time))
+
+    if extensions_found:
+        print()
+        print(f"[!] Found the following files with the given extensions ({extensions}):")
+        for file_path in extensions_found:
+            print(Fore.GREEN + f"    - {file_path}")
+    else:
+        print("[*] No files found with the given extensions.\n")
+
     if keywords_found:
-        print("[!] Keywords found in the following files:")
+        print()
+        print(f"[!] Keywords found in the following files ({keywords}):")
         for file_path, keyword in keywords_found.items():
             print(Fore.GREEN + f"    - {file_path}: '{keyword}'")
     else:
         print("[*] No keywords found in scanned files.")
 
+
+    print("\n" + "="*40)
+    print("[*] NFS Exports Summary:")
+    print("="*40)
 
     # Print summary of exports by host (allowed/denied)
     for host, exports in dict_of_exports.items():
@@ -218,16 +249,28 @@ def main():
     if args.output:
         try:
             with open(args.output, 'w') as out_file:
-                out_file.write(f"Scan completed in {total_scan_time:.2f} seconds.\n\n")
+                out_file.write(f"Command: {' '.join(sys.argv)}\n")
+
+                out_file.write(f"\nScan completed in {total_scan_time:.2f} seconds.\n\n")
                 
+                if extensions_found:
+                    out_file.write(f"Files found with the given extensions ({extensions}):\n")
+                    for file_path in extensions_found:
+                        out_file.write(f"    - {file_path}\n")
+                else:
+                    out_file.write(f"No files found with the given extensions ({extensions}).\n")
+
                 if keywords_found:
-                    out_file.write("Keywords found in the following files:\n")
+                    out_file.write(f"Keywords found in the following files ({keywords}):\n")
                     for file_path, keyword in keywords_found.items():
                         out_file.write(f"    - {file_path}: '{keyword}'\n")
                 else:
-                    out_file.write("No keywords found in scanned files.\n")
+                    out_file.write(f"No keywords found in scanned files ({keywords}).\n")
 
-                out_file.write("\nNFS Exports Summary:\n")
+                out_file.write("\n*"*40 + "\n")
+                out_file.write("NFS Exports Summary:\n")
+                out_file.write("*"*40 + "\n")
+
                 for host, exports in dict_of_exports.items():
                     out_file.write(f"\nNFS Exports for {host}:\n")
                     allowed = exports.get('allowed', [])
