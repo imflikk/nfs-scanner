@@ -80,11 +80,16 @@ def check_for_keywords(files, keywords, keywords_found, filesize_to_check):
                 continue
 
             with open(file_path, 'r', errors='ignore') as f:
-                content = f.read()
-                for keyword in keywords:
-                    if keyword in content:
-                        print(Fore.GREEN + f"[!] Found keyword '{keyword}' in file: {file_path}")
-                        keywords_found[file_path] = keyword
+                content = f.readlines()
+                line_count = 1
+                for line in content:
+                    for keyword in keywords:
+                        if keyword in line:
+                            print(Fore.GREEN + f"[!] Found keyword '{keyword}' in file: {file_path}")
+                            print(Fore.GREEN + f"    Line {line_count}: {line.strip()}")
+                            keywords_found[file_path] = keyword
+
+                    line_count += 1
         except Exception as e:
             print(Fore.RED + f"[-] Could not read file {file_path}: {e}")
 
