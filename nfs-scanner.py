@@ -278,6 +278,8 @@ def main():
         with keywords_lock:
             keywords_found.update(local_keywords_found)
 
+        nfs_hosts_processed += 1
+
         print(f"[*] Completed checks for {host} ({nfs_hosts_processed + 1}/{nfs_hosts_count})")
 
         # Update the output file after each host updates in case it crashes at some point
