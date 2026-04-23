@@ -263,10 +263,11 @@ def main():
     dict_lock = Lock()
     extensions_lock = Lock()
     keywords_lock = Lock()
+    processed_lock = Lock()
 
     # Function to wrap start_checks with thread-safe data merging (Copilot)
     def thread_safe_start_checks(host):
-        nonlocal dict_of_exports, extensions_found, keywords_found
+        nonlocal dict_of_exports, extensions_found, keywords_found, nfs_hosts_processed
         local_dict_of_exports, local_extensions_found, local_keywords_found = start_checks(
             host, {}, [], {}, extensions, keywords, filesize_to_check, depth
         )
@@ -278,9 +279,12 @@ def main():
         with keywords_lock:
             keywords_found.update(local_keywords_found)
 
-        nfs_hosts_processed += 1
+        with processed_lock:
+            nfs_hosts_processed += 1
+            current_processed = nfs_hosts_processed
 
-        print(f"[*] Completed checks for {host} ({nfs_hosts_processed + 1}/{nfs_hosts_count})")
+
+        print(f"[*] Completed checks for {host} ({current_processed}/{nfs_hosts_count})")
 
         # Update the output file after each host updates in case it crashes at some point
         write_output_file(args.output, time.time() - start_time, extensions_found, extensions, keywords_found, keywords, dict_of_exports)
