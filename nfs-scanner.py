@@ -86,7 +86,8 @@ def check_for_keywords(files, keywords, keywords_found, filesize_to_check):
                     for keyword in keywords:
                         if keyword in line:
                             print(Fore.GREEN + f"[!] Found keyword '{keyword}' in file: {file_path}")
-                            print(Fore.GREEN + f"    Line {line_count}: {line.strip()}")
+                            # Only print up to 100 characters of that line to avoid flooding the console
+                            print(Fore.GREEN + f"    Line {line_count}: {line[0:100].encode('utf-8').decode().strip()}")
                             keywords_found[file_path] = keyword
 
                     line_count += 1
@@ -237,6 +238,9 @@ def main():
             except Exception as e:
                 print(Fore.RED + f"[-] Could not read file {args.file}: {e}")
                 return
+            
+    nfs_hosts_count = len(nfs_hosts)
+    nfs_hosts_processed = 0
 
     extensions = args.extensions
     keywords = args.keywords.split(',')
@@ -274,6 +278,9 @@ def main():
         with keywords_lock:
             keywords_found.update(local_keywords_found)
 
+        print(f"[*] Completed checks for {host} ({nfs_hosts_processed + 1}/{nfs_hosts_count})")
+
+        # Update the output file after each host updates in case it crashes at some point
         write_output_file(args.output, time.time() - start_time, extensions_found, extensions, keywords_found, keywords, dict_of_exports)
 
     # Use ThreadPoolExecutor for concurrency with a thread limit (Copilot)
