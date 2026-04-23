@@ -134,6 +134,58 @@ def start_checks(host, dict_of_exports, extensions_found, keywords_found, extens
                 dict_of_exports[host]['denied'].append(export)
 
     return dict_of_exports, extensions_found, keywords_found
+
+def write_output_file(output_file, scan_time, extensions_found, extensions, keywords_found, keywords, dict_of_exports):
+    if not output_file:
+        return
+        
+    try:
+        with open(output_file, 'w') as out_file:
+            out_file.write(f"Command: {' '.join(sys.argv)}\n")
+            out_file.write(f"\nScan completed in {scan_time:.2f} seconds.\n\n")
+            
+            if extensions_found:
+                out_file.write(f"Files found with the given extensions ({extensions}):\n")
+                for file_path in extensions_found:
+                    out_file.write(f"    - {file_path}\n")
+            else:
+                out_file.write(f"No files found with the given extensions ({extensions}).\n")
+
+            if keywords_found:
+                out_file.write(f"Keywords found in the following files ({keywords}):\n")
+                for file_path, keyword in keywords_found.items():
+                    out_file.write(f"    - {file_path}: '{keyword}'\n")
+            else:
+                out_file.write(f"No keywords found in scanned files ({keywords}).\n")
+
+            out_file.write("\n")
+            out_file.write("*"*40 + "\n")
+            out_file.write("NFS Exports Summary:\n")
+            out_file.write("*"*40 + "\n")
+
+            for host, exports in dict_of_exports.items():
+                out_file.write(f"\nNFS Exports for {host}:\n")
+                allowed = exports.get('allowed', [])
+                denied = exports.get('denied', [])
+                if allowed:
+                    out_file.write("  Allowed Exports:\n")
+                    for exp in allowed:
+                        out_file.write(f"    - {exp}\n")
+                else:
+                    out_file.write("  No allowed exports mounted.\n")
+
+                if denied:
+                    out_file.write("  Denied Exports:\n")
+                    for exp in denied:
+                        out_file.write(f"    - {exp}\n")
+                else:
+                    out_file.write("  No denied exports.\n")
+
+        # Keeping console output cleaner by not printing a success message every time it's called ad-hoc
+        # print(Fore.GREEN + f"\n[+] Results saved to {output_file}")
+    except Exception as e:
+        print(Fore.RED + f"\n[-] Could not write to output file {output_file}: {e}")
+
     
 def main():
 
@@ -217,6 +269,8 @@ def main():
         with keywords_lock:
             keywords_found.update(local_keywords_found)
 
+        write_output_file(args.output, time.time() - start_time, extensions_found, extensions, keywords_found, keywords, dict_of_exports)
+
     # Use ThreadPoolExecutor for concurrency with a thread limit (Copilot)
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
         futures = [executor.submit(thread_safe_start_checks, host) for host in nfs_hosts]
@@ -283,53 +337,8 @@ def main():
 
     # Save results to output file.  Includes both keyword hits and all exports seen for each host
     if args.output:
-        try:
-            with open(args.output, 'w') as out_file:
-                out_file.write(f"Command: {' '.join(sys.argv)}\n")
-
-                out_file.write(f"\nScan completed in {total_scan_time:.2f} seconds.\n\n")
-                
-                if extensions_found:
-                    out_file.write(f"Files found with the given extensions ({extensions}):\n")
-                    for file_path in extensions_found:
-                        out_file.write(f"    - {file_path}\n")
-                else:
-                    out_file.write(f"No files found with the given extensions ({extensions}).\n")
-
-                if keywords_found:
-                    out_file.write(f"Keywords found in the following files ({keywords}):\n")
-                    for file_path, keyword in keywords_found.items():
-                        out_file.write(f"    - {file_path}: '{keyword}'\n")
-                else:
-                    out_file.write(f"No keywords found in scanned files ({keywords}).\n")
-
-                out_file.write("\n")
-                out_file.write("*"*40 + "\n")
-                out_file.write("NFS Exports Summary:\n")
-                out_file.write("*"*40 + "\n")
-
-                for host, exports in dict_of_exports.items():
-                    out_file.write(f"\nNFS Exports for {host}:\n")
-                    allowed = exports.get('allowed', [])
-                    denied = exports.get('denied', [])
-                    if allowed:
-                        out_file.write("  Allowed Exports:\n")
-                        for exp in allowed:
-                            out_file.write(f"    - {exp}\n")
-                    else:
-                        out_file.write("  No allowed exports mounted.\n")
-
-                    if denied:
-                        out_file.write("  Denied Exports:\n")
-                        for exp in denied:
-                            out_file.write(f"    - {exp}\n")
-                    else:
-                        out_file.write("  No denied exports.\n")
-
-            print(Fore.GREEN + f"\n[+] Results saved to {args.output}")
-        except Exception as e:
-            print(Fore.RED + f"\n[-] Could not write to output file {args.output}: {e}")
-
+        write_output_file(args.output, total_scan_time, extensions_found, extensions, keywords_found, keywords, dict_of_exports)
+        print(Fore.GREEN + f"\n[+] Final results saved to {args.output}")
             
             
         
